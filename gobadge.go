@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -30,7 +32,7 @@ func main() {
 	yellowThreshold := flag.Int("yellow", 30, "At what percentage does the badge becomes yellow instead of red")
 	greenThreshold := flag.Int("green", 70, "At what percentage does the badge becomes green instead of yellow")
 	color := flag.String("color", "", "Color of the badge - green/yellow/red")
-	target := flag.String("target", "README.md", "Target file")
+	target := flag.String("target", "coverage.svg", "Target file")
 	value := flag.String("value", "", "Text on the right side of the badge")
 	link := flag.String("link", "", "Link the badge goes to")
 
@@ -66,7 +68,7 @@ func generateBadge(source string, target string, params *Params) error {
 	}
 
 	badgeColor := setColor(coverage, params.threshold.yellow, params.threshold.green, params.color)
-	err = updateReadme(target, coverage, params.label, badgeColor, params.link)
+	err = saveSvg(target, coverage, params.label, badgeColor)
 
 	if err != nil {
 		return err
@@ -112,44 +114,27 @@ func retrieveTotalCoverage(filename string) (string, error) {
 	return last, nil
 }
 
-func updateReadme(target string, coverage string, label string, color string, link string) error {
-	found := false
+func saveSvg(target string, coverage string, label string, color string) error {
 	encodedLabel := url.QueryEscape(label)
 	encodedCoverage := url.QueryEscape(coverage)
+	urlx := fmt.Sprintf(`https://img.shields.io/badge/%s-%s-%s`, encodedLabel, encodedCoverage, color)
 
-	input, err := ioutil.ReadFile(target)
+	response, e := http.Get(urlx)
+	if e != nil {
+		log.Fatal(e)
+	}
+	defer response.Body.Close()
+
+	//open a file for writing
+	file, err := os.Create(target)
 	if err != nil {
-		fmt.Println("\033[1;31mGoBadge: Error while reading the target file\033[0m")
-		return err
+		log.Fatal(err)
 	}
+	defer file.Close()
 
-	lines := strings.Split(string(input), "\n")
-
-	newLine := "![" + label + "](https://img.shields.io/badge/" + encodedLabel + "-" + encodedCoverage + "-" + color + ")"
-	if link != "" {
-		newLine = "[![" + label + "](https://img.shields.io/badge/" + encodedLabel + "-" + encodedCoverage + "-" + color + ")](" + link + ")"
-	}
-
-	for i, line := range lines {
-		if strings.Contains(line, "!["+label+"](https://img.shields.io/badge/"+encodedLabel) {
-			found = true
-			lines[i] = newLine
-		}
-	}
-
-	// If badge not found, insert the badge on line 2 (right after the title)
-	if found == false {
-		lines = append(lines, "")
-		copy(lines[2:], lines[1:])
-		lines[1] = newLine
-	}
-
-	output := strings.Join(lines, "\n")
-	err = ioutil.WriteFile(target, []byte(output), 0644)
+	_, err = io.Copy(file, response.Body)
 	if err != nil {
-		fmt.Println("\033[1;31mGoBadge: Error while updating the target file\033[0m")
-		return err
+		log.Fatal(err)
 	}
-
 	return nil
 }
